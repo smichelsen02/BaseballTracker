@@ -15,14 +15,14 @@ frameSize = (1024,1024)
 
 
 # termination criteria
-criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 50, 0.0001)
 
 
 # prepare object points, like (0,0,0), (1,0,0), (2,0,0) ....,(6,5,0)
 objp = np.zeros((chessboardSize[0] * chessboardSize[1], 3), np.float32)
 objp[:,:2] = np.mgrid[0:chessboardSize[0],0:chessboardSize[1]].T.reshape(-1,2)
 
-size_of_chessboard_squares_mm = 8.15
+size_of_chessboard_squares_mm = 12
 objp = objp * size_of_chessboard_squares_mm
 
 # Arrays to store object points and image points from all the images.
@@ -72,14 +72,14 @@ cv.destroyAllWindows()
 
 
 ############## CALIBRATION #######################################################
-
-retL, cameraMatrixL, distL, rvecsL, tvecsL = cv.calibrateCamera(objpoints, imgpointsL, frameSize, None, None)
+flags = cv.CALIB_TILTED_MODEL
+retL, cameraMatrixL, distL, rvecsL, tvecsL = cv.calibrateCamera(objpoints, imgpointsL, frameSize, None, flags,criteria)
 heightL, widthL, channelsL = imgL.shape
-newCameraMatrixL, roi_L = cv.getOptimalNewCameraMatrix(cameraMatrixL, distL, (widthL, heightL), 1, (widthL, heightL))
+newCameraMatrixL, roi_L = cv.getOptimalNewCameraMatrix(cameraMatrixL, distL, (widthL, heightL), 0, (widthL, heightL))
 
-retR, cameraMatrixR, distR, rvecsR, tvecsR = cv.calibrateCamera(objpoints, imgpointsR, frameSize, None, None)
+retR, cameraMatrixR, distR, rvecsR, tvecsR = cv.calibrateCamera(objpoints, imgpointsR, frameSize, None, flags)
 heightR, widthR, channelsR = imgR.shape
-newCameraMatrixR, roi_R = cv.getOptimalNewCameraMatrix(cameraMatrixR, distR, (widthR, heightR), 1, (widthR, heightR))
+newCameraMatrixR, roi_R = cv.getOptimalNewCameraMatrix(cameraMatrixR, distR, (widthR, heightR), 0, (widthR, heightR))
 
 print(newCameraMatrixR)
 print(newCameraMatrixL)
@@ -87,28 +87,34 @@ cv_file = cv.FileStorage('intrinsics.xml', cv.FILE_STORAGE_WRITE)
 cv_file.write('Right_Intrinsics', newCameraMatrixR)
 cv_file.write('Left_Intrinsics', newCameraMatrixL)
 
-
+# mean_error = 0
+# for i in range(len(objpoints)):
+#     imgpoints2, _ = cv.projectPoints(imgpointsL[i], rvecsL[i], tvecsL[i], newCameraMatrixL, distL)
+#     error = cv.norm(objpoints[i], imgpoints2, cv.NORM_L2)/len(imgpoints2)
+#     mean_error += error
+# print( "total error: {}".format(mean_error/len(objpoints)) )
 ########## Stereo Vision Calibration #############################################
 
 flags = 0
-flags |= cv.CALIB_FIX_INTRINSIC
+flags |= cv.CALIB_FIX_INTRINSIC + cv.CALIB_TILTED_MODEL
 # Here we fix the intrinsic camara matrixes so that only Rot, Trns, Emat and Fmat are calculated.
 # Hence intrinsic parameters are the same
 
-criteria_stereo= (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+criteria_stereo= (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 100, 0.0001)
 
 # This step is performed to transformation between the two cameras and calculate Essential and Fundamenatl matrix
-retStereo, newCameraMatrixL, distL, newCameraMatrixR, distR, rot, trans, essentialMatrix, fundamentalMatrix = cv.stereoCalibrate(objpoints, imgpointsL, imgpointsR, newCameraMatrixL, distL, newCameraMatrixR, distR, grayL.shape[::-1], criteria_stereo, flags)
+retStereo, newCameraMatrixL, distL, newCameraMatrixR, distR, rot, trans, essentialMatrix, fundamentalMatrix = cv.stereoCalibrate(objpoints, imgpointsL, imgpointsR, newCameraMatrixL, distL, newCameraMatrixR, distR, frameSize, criteria_stereo, flags)
 
 
 
 ########## Stereo Rectification #################################################
 
 rectifyScale= 1
-rectL, rectR, projMatrixL, projMatrixR, Q, roi_L, roi_R= cv.stereoRectify(newCameraMatrixL, distL, newCameraMatrixR, distR, grayL.shape[::-1], rot, trans, rectifyScale,(0,0))
+flags |= cv.CALIB_ZERO_DISPARITY
+rectL, rectR, projMatrixL, projMatrixR, Q, roi_L, roi_R= cv.stereoRectify(newCameraMatrixL, distL, newCameraMatrixR, distR, frameSize, rot, trans, rectifyScale,flags, (1024,1024))
 
-stereoMapL = cv.initUndistortRectifyMap(newCameraMatrixL, distL, rectL, projMatrixL, grayL.shape[::-1], cv.CV_16SC2)
-stereoMapR = cv.initUndistortRectifyMap(newCameraMatrixR, distR, rectR, projMatrixR, grayR.shape[::-1], cv.CV_16SC2)
+stereoMapL = cv.initUndistortRectifyMap(newCameraMatrixL, distL, rectL, projMatrixL, (grayL.shape[::-1]), cv.CV_32FC1)
+stereoMapR = cv.initUndistortRectifyMap(newCameraMatrixR, distR, rectR, projMatrixR, grayR.shape[::-1], cv.CV_32FC1)
 
 print("Saving parameters!")
 cv_file = cv.FileStorage('stereoMap.xml', cv.FILE_STORAGE_WRITE)

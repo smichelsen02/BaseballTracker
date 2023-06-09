@@ -6,6 +6,8 @@ import cv2 as cv
 import CircleFinder
 import triangulation as tri
 import copy
+import cvzone
+
 
 
 #initial storage lists
@@ -14,7 +16,8 @@ yList = []
 zList = []
 frameList = []
 csvRowList = []
-csvRowList.append(['Frame', 'X Position', 'Y Position', 'Z position'])
+csvRowList.append(['Frame', 'X Position', 'Y Position', 'Z position', 'Disparity', 'Center Left X', 'Center Left Y',
+                   'Center Right X', 'Center Right X'])
 
 #create correction matrices from calibration step
 cv_file = cv.FileStorage()
@@ -26,8 +29,8 @@ stereoMapR_x = cv_file.getNode('stereoMapR_x').mat()
 stereoMapR_y = cv_file.getNode('stereoMapR_y').mat()
 #pull each frame for each camera from an mp4
 
-capR = cv.VideoCapture('images/videos/tests_S0001.mp4')
-capL = cv.VideoCapture('images/videos/tests_S0002.mp4')
+capR = cv.VideoCapture('images/videos/trial3_C001H001S0001.mp4')
+capL = cv.VideoCapture('images/videos/trial3_C002H001S0001.mp4')
 count = 0
 while capR.isOpened() and capL.isOpened():
     count +=1
@@ -37,80 +40,112 @@ while capR.isOpened() and capL.isOpened():
     if not retL or not retR:
         print("Can't receive frame. Exiting ...")
         break
-
+    template = cv.resize(cv.imread('images/Templates/ScaleTestTemplate.png', 0), (0,0),fx = (87/42), fy = (87/42))
+    scaleFactor = 87/42
 #applies calibration values to correct views
     frame_Right = cv.remap(frameR, stereoMapR_x, stereoMapR_y, cv.INTER_LANCZOS4, cv.BORDER_CONSTANT, 0)
     frame_Left = cv.remap(frameL, stereoMapL_x, stereoMapL_y, cv.INTER_LANCZOS4, cv.BORDER_CONSTANT, 0)
-
+    # frame_Right = frameR
+    # frame_Left = frameL
 
 #displays each actual corrected frame
     #note it is showing the uncorrected frames due to the calibration issues caused by the paper being loose
-    cv.imshow('Left', frameL)
-    cv.imshow('Right', frameR)
 
 
-#mask frames for white of the ball
-    #The values here are the RGB value for white. a snapshot of a frame can be used with an
-    #online color selector to adjust these values as needed
-    upperMaskLimit = np.array([255,255,255])
-    lowerMaskLimit = np.array([200,200,200])
-    maskR = cv.inRange(frameR, lowerMaskLimit, upperMaskLimit)
-    maskL = cv.inRange(copy.copy(frameL), lowerMaskLimit, upperMaskLimit)
-    cv.imwrite('images/maskImages/frameL' + str(count) + '.png', frameL)
 
-#find circular contour of ball in each frame
-    #right contours
-    circleRight = CircleFinder.findCircle(frameR, maskR, count)
-    #left contours
-    circleLeft = CircleFinder.findCircle(frameL, maskL, count)
-
-
-#run the find depth on the contours of ball
-
-    #I need to figure out the color issues to be able to adress this part. there is not a way i know of to isolate
-    #for a circular contour, just largest or smallest. Currently, the ball is neither of those. if i can isolate
-    #the ball by itself in the mask, then that solves the issue entirely.
 
 
     #calculate depth
     #defines needed knowns
     knownWidth = 6 #units are mm currently
     alpha = 46 #field of view in degrees
-    baseline = 12.7 #cm
+    baseline = 107.95 #mm
     #get and store left intrinsics
     cv_file = cv.FileStorage()
     cv_file.open('intrinsics.xml', cv.FileStorage_READ)
     leftIntrinsics = cv_file.getNode('Left_Intrinsics').mat()
     focalxLengthLeft = leftIntrinsics[0,0]
     focalyLengthLeft = leftIntrinsics[1,1]
-    OxLeft = leftIntrinsics[2,0]
-    OyLeft = leftIntrinsics[2,1]
-
+    OxLeft = leftIntrinsics[0,2]
+    OyLeft = leftIntrinsics[1,2]
+    print('oxLeft' + str(OxLeft))
+    print('oyLeft' + str(OyLeft))
 
     #run find depth function
-    if np.all(circleRight) == None or np.all(circleLeft) == None:
-        print("Tracking lost")
+    # if np.all(circleRight) == None or np.all(circleLeft) == None:
+    #     print("Tracking lost")
+    #
+    # else:
+    #     depth , xLocation, yLocation= tri.findDepth(circleRight, circleLeft, frameR, frameL, baseline, focalxLengthLeft, focalyLengthLeft,OxLeft, OyLeft, alpha)
+    #     print("Depth: " + str(depth))
 
+    methods = [cv.TM_CCOEFF, cv.TM_CCOEFF_NORMED, cv.TM_CCORR,
+               cv.TM_CCORR_NORMED, cv.TM_SQDIFF, cv.TM_SQDIFF_NORMED]
+    print(count)
+    h, w = template.shape
+    print(h, w)
+    scaleFactor = 1-((1-(35/87))/1361)*(count-1)
+    template = cv.resize(template, (0,0), fx = scaleFactor, fy = scaleFactor)
+    h, w = template.shape
+    print(h, w)
+    imgL = cv.cvtColor(frame_Left, cv.COLOR_BGR2GRAY)
+    imgR = cv.cvtColor(frame_Right, cv.COLOR_BGR2GRAY)
+
+    method = methods[3]
+
+    #run template matching
+    resultL = cv.matchTemplate(imgL, template, method)
+    min_val, max_val, min_loc, max_loc = cv.minMaxLoc(resultL)
+    if method in [cv.TM_SQDIFF, cv.TM_SQDIFF_NORMED]:
+        locationL = min_loc
     else:
-        depth , xLocation, yLocation= tri.findDepth(circleRight, circleLeft, frameR, frameL, baseline, focalxLengthLeft, focalyLengthLeft,OxLeft, OyLeft, alpha)
-        print("Depth: " + str(depth))
+        locationL = max_loc
+
+    centerL = (locationL[0] + w/2, locationL[1] + h/2)
+    bottomCornerL = (locationL[0] + w, locationL[1] + h)
+
+    resultR = cv.matchTemplate(imgR, template, method)
+    min_val, max_val, min_loc, max_loc = cv.minMaxLoc(resultR)
+    if method in [cv.TM_SQDIFF, cv.TM_SQDIFF_NORMED]:
+        locationR = min_loc
+    else:
+        locationR = max_loc
+    centerR = (locationR[0] + w/2, locationR[1] + h/2)
+    bottomCornerR = (locationR[0] + w, locationR[1] + h)
+
+    cv.rectangle(frame_Left, locationL, bottomCornerL, 255, 5)
+    cv.rectangle(frame_Right, locationR, bottomCornerR, 255, 5)
+    cv.circle(frame_Left, (round(centerL[0]), round(centerL[1])), 5, (222,222,0), -1)
+    cv.circle(frame_Right, (round(centerR[0]), round(centerR[1])), 5, (222,222,0), -1)
+    cv.putText(frame_Left, str(count), (75,50), cv.FONT_HERSHEY_SIMPLEX, 0.7, (124,252,0),2)
+    xDisparity = centerL[0] - centerR[0]
+
+
+    zDepth = (baseline * focalxLengthLeft) / xDisparity
+    xLocation = (baseline * (centerL[0] - OxLeft )) / (xDisparity)
+    yLocation = (baseline * focalxLengthLeft * (centerL[1] - OyLeft)) / (focalyLengthLeft * (xDisparity))
 
 #Add depth, x, y, and frame number to lists
     row = []
     row.append(count)
-    row.append(xLocation)
-    row.append(yLocation)
-    row.append(depth)
+    row.append(abs(xLocation))
+    row.append(abs(yLocation))
+    row.append(abs(zDepth))
+    row.append(xDisparity)
+    row.append(centerL[0])
+    row.append(centerL[1])
+    row.append(centerR[0])
+    row.append(centerR[1])
     csvRowList.append(row)
 
+    imgStack = cvzone.stackImages([frame_Left,frame_Right, frameL, frameR],2,0.5)
+    cv.imshow('Left', imgStack)
 
-    cv.imshow('maskR', maskR)
-    cv.imshow('maskL', maskL)
     if cv.waitKey(1) == ord('q'):
         break
 
 #end of loop and final code bits before end of program
-print(zList)
+
 
 np.savetxt("PositionData.csv", csvRowList, delimiter =", ", fmt ='% s')
 
